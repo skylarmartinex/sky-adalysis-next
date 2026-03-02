@@ -4,8 +4,8 @@
 // ============================================================
 
 // ---- Your Google Sheet IDs ----
-// These are your existing automated sheets that get populated daily.
-// Each mini-app only needs the sheet(s) it uses.
+// These are your existing automated sheets populated daily by Google Ads scripts.
+// Update these if your Google Ads scripts point to different sheets.
 
 var SHEET_IDS = {
     CAMPAIGNS: '1ngxoTvo11Og9w71zWJdBdEikVTeokIEQgeUUQjHBWsM',
@@ -13,26 +13,37 @@ var SHEET_IDS = {
     SEARCH_TERMS: '1YNhDFgtak0Yf00mq849GvtIA3E3h74iPHX99toIJA0w',
 };
 
+// ---- Tab names inside each sheet ----
+// Must match the SHEET_NAME in your Google Ads scripts.
+
+var TAB_NAMES = {
+    CAMPAIGNS: 'Campaign Performance',
+    KEYWORDS: 'Keyword Performance',
+    SEARCH_TERMS: 'Search Terms',
+};
+
 // ---- Data Fetching ----
 
 /**
  * Read data from one of your existing automated sheets.
- * @param {'CAMPAIGNS'|'KEYWORDS'|'SEARCH_TERMS'} sheetKey - which sheet to read
- * @param {string} [tabName] - optional tab name. If omitted, reads the first tab.
- * @returns {Array[]} 2D array of values (header row + data)
+ * @param {'CAMPAIGNS'|'KEYWORDS'|'SEARCH_TERMS'} sheetKey
+ * @returns {Array[]} 2D array (header row + data)
  */
-function getSheetData(sheetKey, tabName) {
+function getSheetData(sheetKey) {
     var id = SHEET_IDS[sheetKey];
-    if (!id) throw new Error('Unknown sheet key: ' + sheetKey + '. Valid: CAMPAIGNS, KEYWORDS, SEARCH_TERMS');
+    if (!id) throw new Error('Unknown sheet key: ' + sheetKey);
 
+    var tabName = TAB_NAMES[sheetKey];
     var ss = SpreadsheetApp.openById(id);
     var sheet;
 
     if (tabName) {
         sheet = ss.getSheetByName(tabName);
-        if (!sheet) throw new Error('Tab "' + tabName + '" not found in ' + sheetKey + ' sheet.');
+        if (!sheet) {
+            // Fallback to first tab if named tab not found
+            sheet = ss.getSheets()[0];
+        }
     } else {
-        // Auto-detect: use the first sheet
         sheet = ss.getSheets()[0];
     }
 
@@ -41,8 +52,6 @@ function getSheetData(sheetKey, tabName) {
 
 /**
  * Parse a 2D array (header + rows) into array of objects.
- * @param {Array[]} data - from getSheetData()
- * @returns {Object[]}
  */
 function parseTable(data) {
     if (data.length < 2) return [];
@@ -50,7 +59,7 @@ function parseTable(data) {
     var result = [];
     for (var i = 1; i < data.length; i++) {
         var row = data[i];
-        if (!row[0] && !row[1]) continue; // skip empty rows
+        if (!row[0] && !row[1]) continue;
         var obj = {};
         for (var j = 0; j < headers.length; j++) {
             obj[headers[j]] = row[j];
@@ -60,11 +69,19 @@ function parseTable(data) {
     return result;
 }
 
+// ---- Column Finder ----
+// Handles slight naming variations across sheets.
+
+function findCol(headers, possibleNames) {
+    for (var i = 0; i < possibleNames.length; i++) {
+        var idx = headers.indexOf(possibleNames[i]);
+        if (idx >= 0) return idx;
+    }
+    return -1;
+}
+
 // ---- Number Parsing ----
 
-/**
- * Parse a number from a cell value (handles "$1,234", "12.5%", commas, etc.)
- */
 function parseNum(val) {
     if (typeof val === 'number') return val;
     if (!val) return 0;
@@ -73,9 +90,6 @@ function parseNum(val) {
     return isNaN(n) ? 0 : n;
 }
 
-/**
- * Parse a percentage (e.g. "45.2%" → 45.2)
- */
 function parsePct(val) {
     return parseNum(val);
 }
@@ -127,20 +141,12 @@ function fmtDelta(delta, invertColor) {
 
 // ---- Sheet Helpers ----
 
-/**
- * Get or create a sheet tab by name in the ACTIVE spreadsheet.
- */
 function getOrCreateSheet(ss, name) {
     var sheet = ss.getSheetByName(name);
-    if (!sheet) {
-        sheet = ss.insertSheet(name);
-    }
+    if (!sheet) sheet = ss.insertSheet(name);
     return sheet;
 }
 
-/**
- * Clear a sheet and write a 2D array to it.
- */
 function writeTable(sheet, data) {
     sheet.clearContents();
     if (data.length > 0 && data[0].length > 0) {
@@ -148,14 +154,10 @@ function writeTable(sheet, data) {
     }
 }
 
-/**
- * Apply header formatting to row 1 of a sheet.
- */
 function formatHeaderRow(sheet) {
     var lastCol = sheet.getLastColumn();
     if (lastCol < 1) return;
-    var headerRange = sheet.getRange(1, 1, 1, lastCol);
-    headerRange
+    sheet.getRange(1, 1, 1, lastCol)
         .setBackground('#1e293b')
         .setFontColor('#e2e8f0')
         .setFontWeight('bold')
@@ -163,9 +165,6 @@ function formatHeaderRow(sheet) {
     sheet.setFrozenRows(1);
 }
 
-/**
- * Auto-resize all columns in a sheet.
- */
 function autoResize(sheet) {
     var lastCol = sheet.getLastColumn();
     for (var i = 1; i <= lastCol; i++) {

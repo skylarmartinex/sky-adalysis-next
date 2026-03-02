@@ -1,8 +1,12 @@
 // ============================================================
 // MINI-APP 3: KEYWORD ANALYZER
-// Paste into Apps Script editor of a new Google Sheet
 // Also paste Utils.gs from _shared/
 // ============================================================
+// Column names from Google Ads script:
+// Keyword, CampaignName, CampaignId, AdGroupName, AdGroupId,
+// MatchType, Status, QualityScore, ExpectedCtr, AdRelevance,
+// LandingPageExperience, Cost, Impressions, Clicks, Conversions,
+// ConversionValue, CPC, CTR, CVR, CPA, ROAS
 
 function onOpen() {
     SpreadsheetApp.getUi()
@@ -14,18 +18,6 @@ function onOpen() {
         .addToUi();
 }
 
-// ---- Column Finder ----
-
-function findCol_(headers, possibleNames) {
-    for (var i = 0; i < possibleNames.length; i++) {
-        var idx = headers.indexOf(possibleNames[i]);
-        if (idx >= 0) return idx;
-    }
-    return -1;
-}
-
-// ---- Data Refresh ----
-
 function refreshKeywords() {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     try {
@@ -33,7 +25,7 @@ function refreshKeywords() {
         var sheet = getOrCreateSheet(ss, 'Keywords');
         writeTable(sheet, data);
         formatHeaderRow(sheet);
-        applyKeywordFormatting_(sheet);
+        applyQSFormatting_(sheet);
         autoResize(sheet);
         SpreadsheetApp.getUi().alert('✓ Keywords refreshed — ' + (data.length - 1) + ' rows.');
     } catch (e) {
@@ -41,18 +33,16 @@ function refreshKeywords() {
     }
 }
 
-// ---- Quality Score Analysis ----
-
 function analyzeQualityScores() {
-    var rows = getKeywordRows_();
-    if (!rows.length) { SpreadsheetApp.getUi().alert('No keyword data. Refresh first.'); return; }
+    var rows = getKeywords_();
+    if (!rows.length) { SpreadsheetApp.getUi().alert('No data. Refresh first.'); return; }
 
     var totalQS = 0, countQS = 0;
     var buckets = { excellent: 0, good: 0, fair: 0, poor: 0, noScore: 0 };
-    var lowQSKeywords = [];
+    var lowQS = [];
 
     rows.forEach(function (r) {
-        var qs = parseNum(r['Quality Score'] || r['Quality score'] || r['QS']);
+        var qs = parseNum(r['QualityScore']);
         if (qs > 0) {
             totalQS += qs; countQS++;
             if (qs >= 7) buckets.excellent++;
@@ -61,10 +51,10 @@ function analyzeQualityScores() {
             else buckets.poor++;
 
             if (qs < 5) {
-                lowQSKeywords.push([
-                    r['Keyword'], r['Campaign'] || r['Campaign name'],
-                    r['Ad group'] || r['Ad Group'], r['Match type'] || r['Match Type'],
-                    qs, parseNum(r['Cost']), parseNum(r['Clicks'])
+                lowQS.push([
+                    r['Keyword'], r['CampaignName'], r['AdGroupName'],
+                    r['MatchType'], qs, parseNum(r['Cost']), parseNum(r['Clicks']),
+                    r['ExpectedCtr'] || '', r['AdRelevance'] || '', r['LandingPageExperience'] || ''
                 ]);
             }
         } else {
@@ -73,46 +63,41 @@ function analyzeQualityScores() {
     });
 
     var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var lowSheet = getOrCreateSheet(ss, 'Low QS Keywords');
-    var output = [['Keyword', 'Campaign', 'Ad Group', 'Match Type', 'QS', 'Cost', 'Clicks']];
-    lowQSKeywords.sort(function (a, b) { return a[4] - b[4]; });
-    lowQSKeywords.forEach(function (row) { output.push(row); });
-    writeTable(lowSheet, output);
-    formatHeaderRow(lowSheet);
-    autoResize(lowSheet);
-
-    var avgQS = countQS > 0 ? (totalQS / countQS).toFixed(1) : 'N/A';
+    var sheet = getOrCreateSheet(ss, 'Low QS Keywords');
+    var output = [['Keyword', 'Campaign', 'Ad Group', 'Match Type', 'QS', 'Cost', 'Clicks', 'Expected CTR', 'Ad Relevance', 'Landing Page']];
+    lowQS.sort(function (a, b) { return a[4] - b[4]; });
+    lowQS.forEach(function (r) { output.push(r); });
+    writeTable(sheet, output);
+    formatHeaderRow(sheet);
+    autoResize(sheet);
 
     SpreadsheetApp.getUi().alert(
         '📊 Quality Score Analysis\n\n' +
-        'Average QS: ' + avgQS + '/10 (' + countQS + ' keywords scored)\n\n' +
+        'Average QS: ' + (countQS > 0 ? (totalQS / countQS).toFixed(1) : 'N/A') + '/10 (' + countQS + ' scored)\n\n' +
         '✅ Excellent (7-10): ' + buckets.excellent + '\n' +
         '🟢 Good (5-6): ' + buckets.good + '\n' +
         '🟡 Fair (3-4): ' + buckets.fair + '\n' +
         '🔴 Poor (1-2): ' + buckets.poor + '\n' +
         '⚪ No score: ' + buckets.noScore + '\n\n' +
-        lowQSKeywords.length + ' keywords with QS < 5 → "Low QS Keywords" tab.'
+        lowQS.length + ' keywords with QS < 5 → "Low QS Keywords" tab.'
     );
 }
 
-// ---- Exact Match Harvest ----
-
 function findExactMatchCandidates() {
-    var rows = getKeywordRows_();
-    if (!rows.length) { SpreadsheetApp.getUi().alert('No keyword data. Refresh first.'); return; }
+    var rows = getKeywords_();
+    if (!rows.length) { SpreadsheetApp.getUi().alert('No data. Refresh first.'); return; }
 
     var candidates = [];
     rows.forEach(function (r) {
-        var matchType = String(r['Match type'] || r['Match Type'] || '').toLowerCase();
-        var conv = parseNum(r['Conversions'] || r['Conv.'] || r['Conv']);
+        var matchType = String(r['MatchType'] || '').toUpperCase();
+        var conv = parseNum(r['Conversions']);
         var cost = parseNum(r['Cost']);
         var cpa = conv > 0 ? cost / conv : 0;
 
-        if (matchType !== 'exact' && conv >= 5 && cpa < 150) {
+        if (matchType !== 'EXACT' && conv >= 5 && cpa < 150) {
             candidates.push([
-                r['Keyword'], r['Campaign'] || r['Campaign name'],
-                r['Ad group'] || r['Ad Group'], r['Match type'] || r['Match Type'],
-                conv, fmtUsdFull(cost), '$' + cpa.toFixed(0), 'Add as Exact Match'
+                r['Keyword'], r['CampaignName'], r['AdGroupName'],
+                r['MatchType'], conv, fmtUsdFull(cost), '$' + cpa.toFixed(0), 'Add as Exact'
             ]);
         }
     });
@@ -122,7 +107,7 @@ function findExactMatchCandidates() {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = getOrCreateSheet(ss, 'Exact Match Harvest');
     var output = [['Keyword', 'Campaign', 'Ad Group', 'Current Match', 'Conv', 'Cost', 'CPA', 'Action']];
-    candidates.forEach(function (row) { output.push(row); });
+    candidates.forEach(function (r) { output.push(r); });
     writeTable(sheet, output);
     formatHeaderRow(sheet);
     autoResize(sheet);
@@ -131,37 +116,31 @@ function findExactMatchCandidates() {
     SpreadsheetApp.getUi().alert('🎯 Found ' + candidates.length + ' exact match harvest candidates.');
 }
 
-// ---- Underperformer Flagging ----
-
 function flagUnderperformers() {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName('Keywords');
-    if (!sheet || sheet.getLastRow() < 2) {
-        SpreadsheetApp.getUi().alert('No data. Refresh first.');
-        return;
-    }
+    if (!sheet || sheet.getLastRow() < 2) { SpreadsheetApp.getUi().alert('No data. Refresh first.'); return; }
 
     var data = sheet.getDataRange().getValues();
     var headers = data[0].map(function (h) { return String(h).trim(); });
 
-    var costIdx = findCol_(headers, ['Cost']);
-    var convIdx = findCol_(headers, ['Conversions', 'Conv.', 'Conv']);
-    var clicksIdx = findCol_(headers, ['Clicks']);
-    var statusIdx = findCol_(headers, ['Status', 'Keyword status']);
+    var costIdx = findCol(headers, ['Cost']);
+    var convIdx = findCol(headers, ['Conversions']);
+    var clicksIdx = findCol(headers, ['Clicks']);
+    var statusIdx = findCol(headers, ['Status']);
 
     var actionIdx = headers.indexOf('Action');
     if (actionIdx < 0) { actionIdx = headers.length; sheet.getRange(1, actionIdx + 1).setValue('Action'); }
 
     var pauseCount = 0, watchCount = 0;
-
     for (var i = 1; i < data.length; i++) {
         var cost = parseNum(data[i][costIdx]);
         var conv = parseNum(data[i][convIdx]);
         var clicks = parseNum(data[i][clicksIdx]);
-        var status = statusIdx >= 0 ? String(data[i][statusIdx]) : 'active';
+        var status = statusIdx >= 0 ? String(data[i][statusIdx]).toUpperCase() : 'ENABLED';
         var action = '';
 
-        if (status.toLowerCase().indexOf('active') < 0 && status.toLowerCase().indexOf('enabled') < 0) continue;
+        if (status !== 'ENABLED') continue;
 
         if (conv === 0 && clicks >= 100) { action = '🔴 PAUSE — 100+ clicks, 0 conv'; pauseCount++; }
         else if (conv === 0 && cost > 100) { action = '🟠 PAUSE — $100+ spend, 0 conv'; pauseCount++; }
@@ -171,12 +150,12 @@ function flagUnderperformers() {
     }
 
     autoResize(sheet);
-    SpreadsheetApp.getUi().alert('⏸️ Recommend PAUSE: ' + pauseCount + ' | Watch list: ' + watchCount);
+    SpreadsheetApp.getUi().alert('⏸️ Recommend PAUSE: ' + pauseCount + ' | Watch: ' + watchCount);
 }
 
 // ---- Helpers ----
 
-function getKeywordRows_() {
+function getKeywords_() {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName('Keywords');
     var data;
@@ -188,13 +167,12 @@ function getKeywordRows_() {
     return parseTable(data);
 }
 
-function applyKeywordFormatting_(sheet) {
+function applyQSFormatting_(sheet) {
     var lastRow = sheet.getLastRow();
     if (lastRow < 2) return;
     var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (h) { return String(h).trim(); });
-    var qsCol = findCol_(headers, ['Quality Score', 'Quality score', 'QS']);
-    if (qsCol < 0) return;
-    qsCol++; // 1-indexed
+    var qsCol = findCol(headers, ['QualityScore']) + 1;
+    if (qsCol < 1) return;
 
     var qsRange = sheet.getRange(2, qsCol, lastRow - 1, 1);
     var rules = sheet.getConditionalFormatRules();
