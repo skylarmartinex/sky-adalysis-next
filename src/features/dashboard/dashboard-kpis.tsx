@@ -2,6 +2,7 @@
 
 import { KpiTile } from "@/components/shared/kpi-tile";
 import { formatUsd, formatNum, formatPct, formatRoas, formatDec2, pctDelta, formatDelta } from "@/lib/formatters";
+import { usePeriod } from "@/lib/period-context";
 import type { DailyMetric } from "@/data/types";
 
 interface DashboardKpisProps {
@@ -9,9 +10,11 @@ interface DashboardKpisProps {
 }
 
 export function DashboardKpis({ dailyMetrics }: DashboardKpisProps) {
-  const half = Math.floor(dailyMetrics.length / 2);
-  const current = dailyMetrics.slice(half);
-  const previous = dailyMetrics.slice(0, half);
+  const { period } = usePeriod();
+
+  // Slice the current period (last N days) and the equal prior period before it
+  const current = dailyMetrics.slice(-period);
+  const previous = dailyMetrics.slice(-period * 2, -period);
 
   const sum = (arr: DailyMetric[], key: keyof DailyMetric) =>
     arr.reduce((s, d) => s + (d[key] as number), 0);
@@ -57,7 +60,7 @@ export function DashboardKpis({ dailyMetrics }: DashboardKpisProps) {
           key={t.label}
           label={t.label}
           value={t.value}
-          delta={t.delta}
+          delta={previous.length > 0 ? t.delta : undefined}
           sparkData={t.spark.length > 0 ? t.spark : undefined}
         />
       ))}

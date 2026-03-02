@@ -8,25 +8,61 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
+import { usePeriod } from "@/lib/period-context";
 import type { DailyMetric } from "@/data/types";
 
 interface TrendChartProps {
   dailyMetrics: DailyMetric[];
 }
 
+const PERIOD_LABELS: Record<number, string> = {
+  7: "7-Day Trend",
+  14: "14-Day Trend",
+  30: "30-Day Trend",
+};
+
 export function TrendChart({ dailyMetrics }: TrendChartProps) {
-  const data = dailyMetrics.map((d) => ({
+  const { period } = usePeriod();
+
+  // Show current period + the equal prior period for comparison context
+  const sliced = dailyMetrics.slice(-(period * 2));
+  const splitIdx = sliced.length - period; // where "prior" ends and "current" begins
+
+  const data = sliced.map((d, i) => ({
     date: d.date.slice(5),
     cost: Math.round(d.cost),
     conv: Math.round(d.conv * 10) / 10,
+    isPrior: i < splitIdx,
   }));
+
+  // The date at the split point (start of current period) for the reference line
+  const splitDate = data[splitIdx]?.date;
 
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium">30-Day Trend</CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm font-medium">
+            {PERIOD_LABELS[period] ?? `${period}-Day Trend`}
+          </CardTitle>
+          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2 w-4 rounded" style={{ background: "#3b82f688" }} />
+              Cost
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2 w-4 rounded" style={{ background: "#22c55e88" }} />
+              Conv
+            </span>
+            <span className="flex items-center gap-1.5 border-l border-border pl-3">
+              <span className="inline-block h-px w-3 border-t border-dashed border-muted-foreground/50" />
+              Prior period
+            </span>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="h-[220px]">
@@ -48,6 +84,7 @@ export function TrendChart({ dailyMetrics }: TrendChartProps) {
                 tick={{ fill: "#64748b", fontSize: 11 }}
                 tickLine={false}
                 axisLine={{ stroke: "#2a3348" }}
+                interval="preserveStartEnd"
               />
               <YAxis
                 yAxisId="cost"
@@ -71,7 +108,27 @@ export function TrendChart({ dailyMetrics }: TrendChartProps) {
                   fontSize: "12px",
                   color: "#e2e8f0",
                 }}
+                formatter={(value, name) => [
+                  name === "cost" ? `$${Number(value).toLocaleString()}` : value,
+                  name === "cost" ? "Cost" : "Conversions",
+                ]}
               />
+              {/* Dashed reference line at the period boundary */}
+              {splitDate && (
+                <ReferenceLine
+                  yAxisId="cost"
+                  x={splitDate}
+                  stroke="#64748b"
+                  strokeDasharray="4 3"
+                  strokeWidth={1}
+                  label={{
+                    value: "prior ▸ current",
+                    position: "insideTopRight",
+                    fill: "#64748b",
+                    fontSize: 10,
+                  }}
+                />
+              )}
               <Area
                 yAxisId="cost"
                 type="monotone"
@@ -79,7 +136,9 @@ export function TrendChart({ dailyMetrics }: TrendChartProps) {
                 stroke="#3b82f6"
                 fill="url(#costGrad)"
                 strokeWidth={2}
-                name="Cost"
+                name="cost"
+                dot={false}
+                activeDot={{ r: 4, fill: "#3b82f6" }}
               />
               <Area
                 yAxisId="conv"
@@ -88,7 +147,9 @@ export function TrendChart({ dailyMetrics }: TrendChartProps) {
                 stroke="#22c55e"
                 fill="url(#convGrad)"
                 strokeWidth={2}
-                name="Conversions"
+                name="conv"
+                dot={false}
+                activeDot={{ r: 4, fill: "#22c55e" }}
               />
             </AreaChart>
           </ResponsiveContainer>
