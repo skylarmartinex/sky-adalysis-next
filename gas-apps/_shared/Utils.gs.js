@@ -3,43 +3,45 @@
 // Copy this file into each mini-app's Apps Script project
 // ============================================================
 
-/**
- * Config — set these per-app or via PropertiesService
- */
-var CONFIG = {
-    DATA_LAKE_ID: '',  // Set via setDataLakeId() or PropertiesService
+// ---- Your Google Sheet IDs ----
+// These are your existing automated sheets that get populated daily.
+// Each mini-app only needs the sheet(s) it uses.
+
+var SHEET_IDS = {
+    CAMPAIGNS: '1ngxoTvo11Og9w71zWJdBdEikVTeokIEQgeUUQjHBWsM',
+    KEYWORDS: '1vUc7bOmU-_MKctbqYQ0Zm28x_bQ_LGoKEW2mbzdTOBc',
+    SEARCH_TERMS: '1YNhDFgtak0Yf00mq849GvtIA3E3h74iPHX99toIJA0w',
 };
-
-// ---- Setup ----
-
-function setDataLakeId(id) {
-    PropertiesService.getScriptProperties().setProperty('DATA_LAKE_ID', id);
-    SpreadsheetApp.getUi().alert('Data Lake ID saved: ' + id);
-}
-
-function getDataLakeId() {
-    return PropertiesService.getScriptProperties().getProperty('DATA_LAKE_ID') || CONFIG.DATA_LAKE_ID;
-}
 
 // ---- Data Fetching ----
 
 /**
- * Read a tab from the Data Lake sheet. Returns 2D array (header row + data).
- * @param {string} tabName - e.g. "Campaigns", "SearchTerms", "Keywords"
- * @returns {Array[]} 2D array of values
+ * Read data from one of your existing automated sheets.
+ * @param {'CAMPAIGNS'|'KEYWORDS'|'SEARCH_TERMS'} sheetKey - which sheet to read
+ * @param {string} [tabName] - optional tab name. If omitted, reads the first tab.
+ * @returns {Array[]} 2D array of values (header row + data)
  */
-function getDataLakeTab(tabName) {
-    var id = getDataLakeId();
-    if (!id) throw new Error('Data Lake ID not set. Run Setup > Set Data Lake Sheet ID.');
+function getSheetData(sheetKey, tabName) {
+    var id = SHEET_IDS[sheetKey];
+    if (!id) throw new Error('Unknown sheet key: ' + sheetKey + '. Valid: CAMPAIGNS, KEYWORDS, SEARCH_TERMS');
+
     var ss = SpreadsheetApp.openById(id);
-    var sheet = ss.getSheetByName(tabName);
-    if (!sheet) throw new Error('Tab "' + tabName + '" not found in Data Lake.');
+    var sheet;
+
+    if (tabName) {
+        sheet = ss.getSheetByName(tabName);
+        if (!sheet) throw new Error('Tab "' + tabName + '" not found in ' + sheetKey + ' sheet.');
+    } else {
+        // Auto-detect: use the first sheet
+        sheet = ss.getSheets()[0];
+    }
+
     return sheet.getDataRange().getValues();
 }
 
 /**
  * Parse a 2D array (header + rows) into array of objects.
- * @param {Array[]} data - from getDataLakeTab()
+ * @param {Array[]} data - from getSheetData()
  * @returns {Object[]}
  */
 function parseTable(data) {
@@ -48,8 +50,7 @@ function parseTable(data) {
     var result = [];
     for (var i = 1; i < data.length; i++) {
         var row = data[i];
-        // Skip empty rows
-        if (!row[0] && !row[1]) continue;
+        if (!row[0] && !row[1]) continue; // skip empty rows
         var obj = {};
         for (var j = 0; j < headers.length; j++) {
             obj[headers[j]] = row[j];
@@ -87,7 +88,7 @@ function fmtUsd(n) {
 }
 
 function fmtUsdFull(n) {
-    return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    return '$' + Math.round(n).toLocaleString('en-US');
 }
 
 function fmtNum(n) {
@@ -109,19 +110,11 @@ function fmtDec2(n) {
 
 // ---- Period Helpers ----
 
-/**
- * Calculate percentage delta between current and previous values.
- */
 function pctDelta(cur, prev) {
     if (prev === 0) return 0;
     return ((cur - prev) / prev) * 100;
 }
 
-/**
- * Format a delta with arrow and percentage.
- * @param {number} delta - percentage change
- * @param {boolean} invertColor - true for metrics where up=bad (CPA, CPC)
- */
 function fmtDelta(delta, invertColor) {
     if (delta === 0) return { text: '—', color: '#94a3b8' };
     var arrow = delta > 0 ? '↑' : '↓';
@@ -132,23 +125,10 @@ function fmtDelta(delta, invertColor) {
     return { text: text, color: color };
 }
 
-/**
- * Get today and N days ago as date strings (YYYY-MM-DD).
- */
-function getDateRange(days) {
-    var now = new Date();
-    var start = new Date(now);
-    start.setDate(start.getDate() - days);
-    return {
-        start: Utilities.formatDate(start, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
-        end: Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
-    };
-}
-
 // ---- Sheet Helpers ----
 
 /**
- * Get or create a sheet tab by name.
+ * Get or create a sheet tab by name in the ACTIVE spreadsheet.
  */
 function getOrCreateSheet(ss, name) {
     var sheet = ss.getSheetByName(name);

@@ -4,39 +4,13 @@
 // Also paste Utils.gs from _shared/
 // ============================================================
 
-/**
- * Menu setup — runs when the sheet opens.
- */
 function onOpen() {
     SpreadsheetApp.getUi()
         .createMenu('⚡ Adalysis')
         .addItem('📊 Open Dashboard', 'openDashboard')
         .addSeparator()
         .addItem('🔄 Refresh Campaign Data', 'refreshCampaigns')
-        .addItem('🔄 Refresh Daily Metrics', 'refreshDailyMetrics')
-        .addSeparator()
-        .addSubMenu(
-            SpreadsheetApp.getUi().createMenu('⚙️ Setup')
-                .addItem('Set Data Lake Sheet ID', 'promptDataLakeId')
-        )
         .addToUi();
-}
-
-// ---- Setup ----
-
-function promptDataLakeId() {
-    var ui = SpreadsheetApp.getUi();
-    var response = ui.prompt(
-        'Data Lake Sheet ID',
-        'Enter the Google Sheet ID of your Ads Data Lake:',
-        ui.ButtonSet.OK_CANCEL
-    );
-    if (response.getSelectedButton() === ui.Button.OK) {
-        var id = response.getResponseText().trim();
-        if (id) {
-            setDataLakeId(id);
-        }
-    }
 }
 
 // ---- Dashboard Sidebar ----
@@ -50,7 +24,6 @@ function openDashboard() {
 
 /**
  * Called from the sidebar to get all dashboard data.
- * Returns a JSON-serializable object.
  */
 function getDashboardData(period) {
     period = period || 30;
@@ -63,12 +36,9 @@ function getDashboardData(period) {
     };
 
     try {
-        // Get daily metrics for KPIs
-        var dailyData = getDailyMetricsLocal();
-        result.kpis = calculateKpis(dailyData, period);
-
-        // Get campaign data
-        result.campaigns = getCampaignsLocal();
+        result.campaigns = getCampaignsFromSource_();
+        // KPIs are calculated from campaign-level data
+        result.kpis = calculateKpisFromCampaigns_(result.campaigns, period);
     } catch (e) {
         result.error = e.message;
     }
@@ -82,11 +52,11 @@ function refreshCampaigns() {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
 
     try {
-        var data = getDataLakeTab('Campaigns');
+        var data = getSheetData('CAMPAIGNS');
         var sheet = getOrCreateSheet(ss, 'Campaigns');
         writeTable(sheet, data);
         formatHeaderRow(sheet);
-        applyCampaignFormatting(sheet);
+        applyCampaignFormatting_(sheet);
         autoResize(sheet);
         SpreadsheetApp.getUi().alert('✓ Campaigns refreshed — ' + (data.length - 1) + ' rows loaded.');
     } catch (e) {
@@ -94,44 +64,33 @@ function refreshCampaigns() {
     }
 }
 
-function refreshDailyMetrics() {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
+// ---- Read Campaign Data ----
 
-    try {
-        var data = getDataLakeTab('DailyMetrics');
-        var sheet = getOrCreateSheet(ss, 'DailyMetrics');
-        writeTable(sheet, data);
-        formatHeaderRow(sheet);
-        autoResize(sheet);
-        SpreadsheetApp.getUi().alert('✓ Daily metrics refreshed — ' + (data.length - 1) + ' rows loaded.');
-    } catch (e) {
-        SpreadsheetApp.getUi().alert('Error: ' + e.message);
-    }
-}
-
-// ---- Local Data Reading ----
-
-function getCampaignsLocal() {
+function getCampaignsFromSource_() {
+    // Try local sheet first, fall back to source
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName('Campaigns');
-    if (!sheet || sheet.getLastRow() < 2) return [];
 
-    var data = sheet.getDataRange().getValues();
+    var data;
+    if (sheet && sheet.getLastRow() >= 2) {
+        data = sheet.getDataRange().getValues();
+    } else {
+        data = getSheetData('CAMPAIGNS');
+    }
+
     var rows = parseTable(data);
 
     return rows.map(function (r) {
         var cost = parseNum(r['Cost']);
-        var conv = parseNum(r['Conversions']);
+        var conv = parseNum(r['Conversions'] || r['Conv.'] || r['Conv']);
         var clicks = parseNum(r['Clicks']);
-        var impressions = parseNum(r['Impressions']);
-        var revenue = parseNum(r['Conv. value']);
+        var impressions = parseNum(r['Impressions'] || r['Impr.'] || r['Impr']);
+        var revenue = parseNum(r['Conv. value'] || r['Revenue'] || r['Conversion value']);
 
         return {
-            name: r['Campaign'] || '',
-            status: r['Campaign Status'] || 'Active',
-            type: r['Campaign Type'] || 'Nonbrand',
-            bidStrategy: r['Bid Strategy'] || r['Bid Strategy Type'] || '',
-            budget: parseNum(r['Budget']),
+            name: r['Campaign'] || r['Campaign name'] || '',
+            status: r['Campaign Status'] || r['Campaign status'] || r['Status'] || 'Active',
+            type: detectCampaignType_(r['Campaign'] || r['Campaign name'] || ''),
             cost: cost,
             clicks: clicks,
             impressions: impressions,
@@ -142,141 +101,95 @@ function getCampaignsLocal() {
             ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
             cvr: clicks > 0 ? (conv / clicks) * 100 : 0,
             avgCpc: clicks > 0 ? cost / clicks : 0,
-            is: parsePct(r['Search Impr. share']),
-            isLostBudget: parsePct(r['Search Lost IS (budget)']),
-            isLostRank: parsePct(r['Search Lost IS (rank)']),
-            prevCost: parseNum(r['Prev Cost']),
-            prevConv: parseNum(r['Prev Conv']),
-            prevCPA: parseNum(r['Prev CPA']),
+            is: parsePct(r['Search Impr. share'] || r['Search impr. share'] || r['Impr. (Top) %'] || 0),
+            isLostBudget: parsePct(r['Search Lost IS (budget)'] || r['Search lost IS (budget)'] || 0),
         };
     });
 }
 
-function getDailyMetricsLocal() {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName('DailyMetrics');
-    if (!sheet || sheet.getLastRow() < 2) return [];
-
-    var data = sheet.getDataRange().getValues();
-    var rows = parseTable(data);
-
-    return rows.map(function (r) {
-        return {
-            date: r['Date'] ? Utilities.formatDate(new Date(r['Date']), Session.getScriptTimeZone(), 'yyyy-MM-dd') : '',
-            cost: parseNum(r['Cost']),
-            clicks: parseNum(r['Clicks']),
-            impressions: parseNum(r['Impressions']),
-            conv: parseNum(r['Conversions']),
-            revenue: parseNum(r['Revenue']),
-            cpa: parseNum(r['CPA']),
-            roas: parseNum(r['ROAS']),
-        };
-    }).sort(function (a, b) {
-        return a.date < b.date ? -1 : 1;
-    });
+/**
+ * Auto-detect campaign type from name.
+ */
+function detectCampaignType_(name) {
+    var n = name.toLowerCase();
+    if (n.indexOf('brand') >= 0) return 'Brand';
+    if (n.indexOf('competitor') >= 0 || n.indexOf('comp') >= 0) return 'Competitor';
+    return 'Nonbrand';
 }
 
 // ---- KPI Calculation ----
 
-function calculateKpis(dailyData, period) {
-    if (!dailyData.length) {
-        return { error: 'No daily metrics. Refresh data first.' };
+function calculateKpisFromCampaigns_(campaigns, period) {
+    if (!campaigns.length) {
+        return { error: 'No campaign data found.' };
     }
 
-    var current = dailyData.slice(-period);
-    var previous = dailyData.slice(-period * 2, -period);
+    // With campaign-level data (not daily), we show totals and can't do period comparison
+    // If you have daily metrics, switch to the daily-based calculation
+    var totals = { cost: 0, clicks: 0, impr: 0, conv: 0, rev: 0 };
 
-    function sum(arr, key) {
-        return arr.reduce(function (s, d) { return s + (d[key] || 0); }, 0);
-    }
+    campaigns.forEach(function (c) {
+        totals.cost += c.cost;
+        totals.clicks += c.clicks;
+        totals.impr += c.impressions;
+        totals.conv += c.conv;
+        totals.rev += c.revenue;
+    });
 
-    var curCost = sum(current, 'cost');
-    var prevCost = sum(previous, 'cost');
-    var curClicks = sum(current, 'clicks');
-    var prevClicks = sum(previous, 'clicks');
-    var curImpr = sum(current, 'impressions');
-    var prevImpr = sum(previous, 'impressions');
-    var curConv = sum(current, 'conv');
-    var prevConv = sum(previous, 'conv');
-    var curRev = sum(current, 'revenue');
-    var prevRev = sum(previous, 'revenue');
-
-    var curCPA = curConv > 0 ? curCost / curConv : 0;
-    var prevCPA = prevConv > 0 ? prevCost / prevConv : 0;
-    var curROAS = curCost > 0 ? curRev / curCost : 0;
-    var prevROAS = prevCost > 0 ? prevRev / prevCost : 0;
-    var curCTR = curImpr > 0 ? (curClicks / curImpr) * 100 : 0;
-    var prevCTR = prevImpr > 0 ? (prevClicks / prevImpr) * 100 : 0;
-    var curCVR = curClicks > 0 ? (curConv / curClicks) * 100 : 0;
-    var prevCVR = prevClicks > 0 ? (prevConv / prevClicks) * 100 : 0;
-    var curAvgCPC = curClicks > 0 ? curCost / curClicks : 0;
-    var prevAvgCPC = prevClicks > 0 ? prevCost / prevClicks : 0;
+    var cpa = totals.conv > 0 ? totals.cost / totals.conv : 0;
+    var roas = totals.cost > 0 ? totals.rev / totals.cost : 0;
+    var ctr = totals.impr > 0 ? (totals.clicks / totals.impr) * 100 : 0;
+    var cvr = totals.clicks > 0 ? (totals.conv / totals.clicks) * 100 : 0;
+    var avgCpc = totals.clicks > 0 ? totals.cost / totals.clicks : 0;
 
     return {
         tiles: [
-            { label: 'Cost', value: fmtUsd(curCost), delta: fmtDelta(pctDelta(curCost, prevCost), true) },
-            { label: 'Clicks', value: fmtNum(curClicks), delta: fmtDelta(pctDelta(curClicks, prevClicks)) },
-            { label: 'Impressions', value: fmtNum(curImpr), delta: fmtDelta(pctDelta(curImpr, prevImpr)) },
-            { label: 'Conversions', value: fmtNum(curConv), delta: fmtDelta(pctDelta(curConv, prevConv)) },
-            { label: 'CPA', value: '$' + curCPA.toFixed(0), delta: fmtDelta(pctDelta(curCPA, prevCPA), true) },
-            { label: 'ROAS', value: fmtRoas(curROAS), delta: fmtDelta(pctDelta(curROAS, prevROAS)) },
-            { label: 'CTR', value: fmtPct(curCTR), delta: fmtDelta(pctDelta(curCTR, prevCTR)) },
-            { label: 'CVR', value: fmtPct(curCVR), delta: fmtDelta(pctDelta(curCVR, prevCVR)) },
-            { label: 'Avg CPC', value: '$' + fmtDec2(curAvgCPC), delta: fmtDelta(pctDelta(curAvgCPC, prevAvgCPC), true) },
+            { label: 'Cost', value: fmtUsd(totals.cost), delta: { text: '—', color: '#94a3b8' } },
+            { label: 'Clicks', value: fmtNum(totals.clicks), delta: { text: '—', color: '#94a3b8' } },
+            { label: 'Impressions', value: fmtNum(totals.impr), delta: { text: '—', color: '#94a3b8' } },
+            { label: 'Conversions', value: fmtNum(totals.conv), delta: { text: '—', color: '#94a3b8' } },
+            { label: 'CPA', value: '$' + cpa.toFixed(0), delta: { text: '—', color: '#94a3b8' } },
+            { label: 'ROAS', value: fmtRoas(roas), delta: { text: '—', color: '#94a3b8' } },
+            { label: 'CTR', value: fmtPct(ctr), delta: { text: '—', color: '#94a3b8' } },
+            { label: 'CVR', value: fmtPct(cvr), delta: { text: '—', color: '#94a3b8' } },
+            { label: 'Avg CPC', value: '$' + fmtDec2(avgCpc), delta: { text: '—', color: '#94a3b8' } },
         ],
-        periodLabel: period + '-day comparison',
-        dataPoints: current.length,
-        comparisonPoints: previous.length,
+        periodLabel: 'Campaign totals (from automated sheet)',
+        dataPoints: campaigns.length + ' campaigns',
+        comparisonPoints: 'n/a',
     };
 }
 
 // ---- Conditional Formatting ----
 
-function applyCampaignFormatting(sheet) {
+function applyCampaignFormatting_(sheet) {
     var lastRow = sheet.getLastRow();
     if (lastRow < 2) return;
 
     var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
 
-    // Find column indices
-    var cpaCol = headers.indexOf('CPA') + 1;
-    var isCol = headers.indexOf('Search Impr. share') + 1;
-    var statusCol = headers.indexOf('Campaign Status') + 1;
-
-    // CPA > $100 = red background
-    if (cpaCol > 0) {
-        var cpaRange = sheet.getRange(2, cpaCol, lastRow - 1, 1);
-        var rule1 = SpreadsheetApp.newConditionalFormatRule()
-            .whenNumberGreaterThan(100)
-            .setBackground('#fecaca')
-            .setFontColor('#991b1b')
-            .setRanges([cpaRange])
-            .build();
-
-        var rule2 = SpreadsheetApp.newConditionalFormatRule()
-            .whenNumberLessThanOrEqualTo(50)
-            .setBackground('#bbf7d0')
-            .setFontColor('#166534')
-            .setRanges([cpaRange])
-            .build();
-
-        var rules = sheet.getConditionalFormatRules();
-        rules.push(rule1, rule2);
-        sheet.setConditionalFormatRules(rules);
+    // Find CPA column (try multiple possible names)
+    var cpaNames = ['CPA', 'Cost / conv.', 'Cost/conv.'];
+    var cpaCol = -1;
+    for (var i = 0; i < cpaNames.length; i++) {
+        var idx = headers.indexOf(cpaNames[i]);
+        if (idx >= 0) { cpaCol = idx + 1; break; }
     }
 
-    // IS < 50% = yellow
-    if (isCol > 0) {
-        var isRange = sheet.getRange(2, isCol, lastRow - 1, 1);
-        var rule3 = SpreadsheetApp.newConditionalFormatRule()
-            .whenNumberLessThan(50)
-            .setBackground('#fef9c3')
-            .setFontColor('#854d0e')
-            .setRanges([isRange])
-            .build();
-
+    if (cpaCol > 0) {
+        var cpaRange = sheet.getRange(2, cpaCol, lastRow - 1, 1);
         var rules = sheet.getConditionalFormatRules();
-        rules.push(rule3);
+
+        rules.push(SpreadsheetApp.newConditionalFormatRule()
+            .whenNumberGreaterThan(100)
+            .setBackground('#fecaca').setFontColor('#991b1b')
+            .setRanges([cpaRange]).build());
+
+        rules.push(SpreadsheetApp.newConditionalFormatRule()
+            .whenNumberLessThanOrEqualTo(50)
+            .setBackground('#bbf7d0').setFontColor('#166534')
+            .setRanges([cpaRange]).build());
+
         sheet.setConditionalFormatRules(rules);
     }
 }

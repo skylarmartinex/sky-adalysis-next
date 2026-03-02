@@ -11,24 +11,7 @@ function onOpen() {
         .addItem('🚩 Flag Waste Terms', 'flagWasteTerms')
         .addItem('📋 Generate Negative List', 'generateNegativeList')
         .addItem('💰 Estimate Savings', 'estimateSavings')
-        .addSeparator()
-        .addSubMenu(
-            SpreadsheetApp.getUi().createMenu('⚙️ Setup')
-                .addItem('Set Data Lake Sheet ID', 'promptDataLakeId')
-        )
         .addToUi();
-}
-
-function promptDataLakeId() {
-    var ui = SpreadsheetApp.getUi();
-    var response = ui.prompt(
-        'Data Lake Sheet ID',
-        'Enter the Google Sheet ID of your Ads Data Lake:',
-        ui.ButtonSet.OK_CANCEL
-    );
-    if (response.getSelectedButton() === ui.Button.OK) {
-        setDataLakeId(response.getResponseText().trim());
-    }
 }
 
 // ---- Data Refresh ----
@@ -37,15 +20,12 @@ function refreshSearchTerms() {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
 
     try {
-        var data = getDataLakeTab('SearchTerms');
+        var data = getSheetData('SEARCH_TERMS');
         var sheet = getOrCreateSheet(ss, 'Search Terms');
         writeTable(sheet, data);
         formatHeaderRow(sheet);
         autoResize(sheet);
-
-        // Auto-flag after loading
         flagWasteTerms();
-
         SpreadsheetApp.getUi().alert('✓ Search terms refreshed — ' + (data.length - 1) + ' rows loaded.');
     } catch (e) {
         SpreadsheetApp.getUi().alert('Error: ' + e.message);
@@ -58,19 +38,19 @@ function flagWasteTerms() {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName('Search Terms');
     if (!sheet || sheet.getLastRow() < 2) {
-        SpreadsheetApp.getUi().alert('No search term data. Refresh first.');
+        SpreadsheetApp.getUi().alert('No search term data. Click "Refresh Search Terms" first.');
         return;
     }
 
     var data = sheet.getDataRange().getValues();
-    var headers = data[0];
+    var headers = data[0].map(function (h) { return String(h).trim(); });
 
-    var costIdx = headers.indexOf('Cost');
-    var convIdx = headers.indexOf('Conversions');
-    var statusIdx = headers.indexOf('Status');
+    // Find columns (handle multiple possible header names from Google Ads)
+    var costIdx = findCol_(headers, ['Cost']);
+    var convIdx = findCol_(headers, ['Conversions', 'Conv.', 'Conv']);
 
     if (costIdx < 0 || convIdx < 0) {
-        SpreadsheetApp.getUi().alert('Required columns not found: Cost, Conversions');
+        SpreadsheetApp.getUi().alert('Could not find Cost or Conversions column. Headers found: ' + headers.join(', '));
         return;
     }
 
@@ -81,8 +61,7 @@ function flagWasteTerms() {
         sheet.getRange(1, flagIdx + 1).setValue('Flag');
     }
 
-    var flagCount = 0;
-    var wasteCost = 0;
+    var flagCount = 0, wasteCost = 0;
 
     for (var i = 1; i < data.length; i++) {
         var cost = parseNum(data[i][costIdx]);
@@ -102,33 +81,23 @@ function flagWasteTerms() {
         sheet.getRange(i + 1, flagIdx + 1).setValue(flag);
     }
 
-    // Conditional formatting: red for waste rows
+    // Conditional formatting
     var lastRow = sheet.getLastRow();
     var flagRange = sheet.getRange(2, flagIdx + 1, lastRow - 1, 1);
-
-    var rule = SpreadsheetApp.newConditionalFormatRule()
-        .whenTextContains('WASTE')
-        .setBackground('#fecaca')
-        .setFontColor('#991b1b')
-        .setRanges([flagRange])
-        .build();
-
-    var rule2 = SpreadsheetApp.newConditionalFormatRule()
-        .whenTextContains('HIGH CPA')
-        .setBackground('#fed7aa')
-        .setFontColor('#9a3412')
-        .setRanges([flagRange])
-        .build();
-
     var rules = sheet.getConditionalFormatRules();
-    rules.push(rule, rule2);
-    sheet.setConditionalFormatRules(rules);
 
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+        .whenTextContains('WASTE').setBackground('#fecaca').setFontColor('#991b1b')
+        .setRanges([flagRange]).build());
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+        .whenTextContains('HIGH CPA').setBackground('#fed7aa').setFontColor('#9a3412')
+        .setRanges([flagRange]).build());
+
+    sheet.setConditionalFormatRules(rules);
     autoResize(sheet);
 
     SpreadsheetApp.getUi().alert(
-        '✓ Flagged ' + flagCount + ' waste terms\n' +
-        'Total waste spend: ' + fmtUsdFull(wasteCost)
+        '✓ Flagged ' + flagCount + ' waste terms\nTotal waste spend: ' + fmtUsdFull(wasteCost)
     );
 }
 
@@ -143,54 +112,40 @@ function generateNegativeList() {
     }
 
     var data = sourceSheet.getDataRange().getValues();
-    var headers = data[0];
+    var headers = data[0].map(function (h) { return String(h).trim(); });
 
-    var queryIdx = headers.indexOf('Search term');
-    var costIdx = headers.indexOf('Cost');
-    var convIdx = headers.indexOf('Conversions');
-    var campIdx = headers.indexOf('Campaign');
-    var matchIdx = headers.indexOf('Match type');
-    var flagIdx = headers.indexOf('Flag');
+    var queryIdx = findCol_(headers, ['Search term', 'Search Term']);
+    var costIdx = findCol_(headers, ['Cost']);
+    var convIdx = findCol_(headers, ['Conversions', 'Conv.', 'Conv']);
+    var campIdx = findCol_(headers, ['Campaign', 'Campaign name']);
 
-    // Build negative list
     var negatives = [];
     for (var i = 1; i < data.length; i++) {
-        var flag = flagIdx >= 0 ? String(data[i][flagIdx]) : '';
         var conv = parseNum(data[i][convIdx]);
         var cost = parseNum(data[i][costIdx]);
 
         if (conv === 0 && cost > 50) {
             negatives.push([
-                data[i][queryIdx],                        // Search term
-                data[i][campIdx] || '',                    // Campaign
-                'Phrase',                                   // Recommended match type
-                fmtUsdFull(cost),                           // Wasted spend
-                flag || '🔴 WASTE',                         // Reason
+                queryIdx >= 0 ? data[i][queryIdx] : '',
+                campIdx >= 0 ? data[i][campIdx] : '',
+                'Phrase',
+                fmtUsdFull(cost),
+                '🔴 Zero-conv waste',
             ]);
         }
     }
 
-    // Sort by cost (descending)
-    negatives.sort(function (a, b) {
-        return parseNum(b[3]) - parseNum(a[3]);
-    });
+    negatives.sort(function (a, b) { return parseNum(b[3]) - parseNum(a[3]); });
 
-    // Write to "Neg Keyword Candidates" tab
     var negSheet = getOrCreateSheet(ss, 'Neg Keyword Candidates');
     var output = [['Negative Keyword', 'Source Campaign', 'Match Type', 'Wasted Spend', 'Reason']];
     negatives.forEach(function (row) { output.push(row); });
-
     writeTable(negSheet, output);
     formatHeaderRow(negSheet);
     autoResize(negSheet);
-
-    // Activate that tab
     ss.setActiveSheet(negSheet);
 
-    SpreadsheetApp.getUi().alert(
-        '✓ Generated ' + negatives.length + ' negative keyword candidates\n' +
-        'Review the "Neg Keyword Candidates" tab.'
-    );
+    SpreadsheetApp.getUi().alert('✓ Generated ' + negatives.length + ' negative keyword candidates.');
 }
 
 // ---- Estimate Savings ----
@@ -204,32 +159,34 @@ function estimateSavings() {
     }
 
     var data = sheet.getDataRange().getValues();
-    var headers = data[0];
-    var costIdx = headers.indexOf('Cost');
-    var convIdx = headers.indexOf('Conversions');
+    var headers = data[0].map(function (h) { return String(h).trim(); });
+    var costIdx = findCol_(headers, ['Cost']);
+    var convIdx = findCol_(headers, ['Conversions', 'Conv.', 'Conv']);
 
-    var totalWaste = 0;
-    var wasteCount = 0;
-    var highCpaWaste = 0;
+    var totalWaste = 0, wasteCount = 0, highCpaWaste = 0;
 
     for (var i = 1; i < data.length; i++) {
         var cost = parseNum(data[i][costIdx]);
         var conv = parseNum(data[i][convIdx]);
 
-        if (conv === 0 && cost > 50) {
-            totalWaste += cost;
-            wasteCount++;
-        } else if (conv > 0 && cost / conv > 200) {
-            highCpaWaste += cost;
-        }
+        if (conv === 0 && cost > 50) { totalWaste += cost; wasteCount++; }
+        else if (conv > 0 && cost / conv > 200) { highCpaWaste += cost; }
     }
 
     SpreadsheetApp.getUi().alert(
         '💰 Savings Estimate\n\n' +
-        'Zero-conversion terms (cost > $50):\n' +
-        '  ' + wasteCount + ' terms = ' + fmtUsdFull(totalWaste) + ' waste\n\n' +
-        'High CPA terms (CPA > $200):\n' +
-        '  Additional ' + fmtUsdFull(highCpaWaste) + ' at risk\n\n' +
+        'Zero-conv terms (cost > $50): ' + wasteCount + ' terms = ' + fmtUsdFull(totalWaste) + '\n' +
+        'High CPA terms (CPA > $200): ' + fmtUsdFull(highCpaWaste) + '\n\n' +
         'Total addressable waste: ' + fmtUsdFull(totalWaste + highCpaWaste)
     );
+}
+
+// ---- Column Finder ----
+
+function findCol_(headers, possibleNames) {
+    for (var i = 0; i < possibleNames.length; i++) {
+        var idx = headers.indexOf(possibleNames[i]);
+        if (idx >= 0) return idx;
+    }
+    return -1;
 }
