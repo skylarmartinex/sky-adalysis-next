@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    body {
+      font-family: 'Google Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 12px;
+      padding: 12px;
+    }
+    
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    
+    .header h1 {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+    
+    .period-selector {
+      display: flex;
+      background: #1e293b;
+      border-radius: 6px;
+      padding: 2px;
+      gap: 2px;
+    }
+    
+    .period-btn {
+      padding: 4px 10px;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    
+    .period-btn.active {
+      background: #3b82f6;
+      color: #fff;
+    }
+    
+    .period-btn:hover:not(.active) {
+      color: #e2e8f0;
+    }
+    
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    
+    .kpi-tile {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    
+    .kpi-label {
+      font-size: 10px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    
+    .kpi-value {
+      font-size: 16px;
+      font-weight: 700;
+      color: #f1f5f9;
+      line-height: 1.2;
+    }
+    
+    .kpi-delta {
+      font-size: 10px;
+      font-weight: 600;
+      margin-top: 2px;
+    }
+    
+    /* Campaign Table */
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #f1f5f9;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    
+    .section-title span {
+      font-size: 10px;
+      color: #64748b;
+      font-weight: 400;
+    }
+    
+    .campaign-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    
+    .campaign-row {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 8px 10px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 4px;
+      transition: border-color 0.15s;
+    }
+    
+    .campaign-row:hover {
+      border-color: #475569;
+    }
+    
+    .camp-name {
+      font-size: 11px;
+      font-weight: 600;
+      color: #e2e8f0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .camp-type {
+      display: inline-block;
+      font-size: 9px;
+      font-weight: 600;
+      padding: 1px 5px;
+      border-radius: 3px;
+      margin-right: 4px;
+    }
+    
+    .camp-type.Brand { background: #3b82f620; color: #60a5fa; }
+    .camp-type.Nonbrand { background: #8b5cf620; color: #a78bfa; }
+    .camp-type.Competitor { background: #f97316; color: #fff; opacity: 0.8; }
+    
+    .camp-metrics {
+      display: flex;
+      gap: 12px;
+      font-size: 10px;
+      color: #94a3b8;
+      align-items: center;
+    }
+    
+    .camp-metrics strong {
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+    
+    .cpa-warn { color: #ef4444; }
+    .cpa-ok { color: #22c55e; }
+    
+    .camp-meta {
+      display: flex;
+      gap: 6px;
+      font-size: 10px;
+      color: #64748b;
+      margin-top: 2px;
+    }
+    
+    /* Status badges */
+    .status { font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 3px; }
+    .status.Active { background: #22c55e20; color: #4ade80; }
+    .status.Paused { background: #64748b20; color: #94a3b8; }
+    
+    /* Loading / Error */
+    .loading {
+      text-align: center;
+      padding: 40px 0;
+      color: #64748b;
+    }
+    
+    .loading .spinner {
+      width: 24px;
+      height: 24px;
+      border: 3px solid #334155;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 8px;
+    }
+    
+    @keyframes spin { to { transform: rotate(360deg); } }
+    
+    .error {
+      background: #ef444420;
+      border: 1px solid #ef4444;
+      border-radius: 6px;
+      padding: 8px 10px;
+      color: #fca5a5;
+      font-size: 11px;
+      margin-bottom: 12px;
+    }
+    
+    .refresh-btn {
+      display: block;
+      width: 100%;
+      padding: 8px;
+      margin-top: 14px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      color: #94a3b8;
+      font-size: 11px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s;
+    }
+    
+    .refresh-btn:hover {
+      background: #334155;
+      color: #e2e8f0;
+    }
+    
+    .footer {
+      margin-top: 12px;
+      text-align: center;
+      font-size: 9px;
+      color: #475569;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>📊 Dashboard</h1>
+    <div class="period-selector">
+      <button class="period-btn" data-period="7" onclick="setPeriod(7)">7d</button>
+      <button class="period-btn" data-period="14" onclick="setPeriod(14)">14d</button>
+      <button class="period-btn active" data-period="30" onclick="setPeriod(30)">30d</button>
+    </div>
+  </div>
+  
+  <div id="content">
+    <div class="loading">
+      <div class="spinner"></div>
+      Loading dashboard...
+    </div>
+  </div>
+  
+  <button class="refresh-btn" onclick="loadData()">🔄 Refresh</button>
+  <div class="footer" id="footer"></div>
+
+  <script>
+    var currentPeriod = 30;
+    
+    function setPeriod(p) {
+      currentPeriod = p;
+      document.querySelectorAll('.period-btn').forEach(function(btn) {
+        btn.classList.toggle('active', parseInt(btn.dataset.period) === p);
+      });
+      loadData();
+    }
+    
+    function loadData() {
+      document.getElementById('content').innerHTML = 
+        '<div class="loading"><div class="spinner"></div>Loading...</div>';
+      
+      google.script.run
+        .withSuccessHandler(renderDashboard)
+        .withFailureHandler(renderError)
+        .getDashboardData(currentPeriod);
+    }
+    
+    function renderError(err) {
+      document.getElementById('content').innerHTML = 
+        '<div class="error">⚠️ ' + (err.message || err) + '</div>' +
+        '<p style="color:#64748b;font-size:11px;text-align:center;">Try: Adalysis menu > Refresh Campaign Data</p>';
+    }
+    
+    function renderDashboard(data) {
+      if (data.error) {
+        renderError({ message: data.error });
+        return;
+      }
+      
+      var html = '';
+      
+      // KPI Tiles
+      if (data.kpis && data.kpis.tiles) {
+        html += '<div class="kpi-grid">';
+        data.kpis.tiles.forEach(function(tile) {
+          html += '<div class="kpi-tile">' +
+            '<div class="kpi-label">' + tile.label + '</div>' +
+            '<div class="kpi-value">' + tile.value + '</div>' +
+            '<div class="kpi-delta" style="color:' + tile.delta.color + '">' + tile.delta.text + '</div>' +
+          '</div>';
+        });
+        html += '</div>';
+        
+        if (data.kpis.periodLabel) {
+          html += '<div style="text-align:center;font-size:10px;color:#64748b;margin-bottom:12px;">' +
+            data.kpis.periodLabel + ' (' + data.kpis.dataPoints + ' vs ' + data.kpis.comparisonPoints + ' days)' +
+          '</div>';
+        }
+      }
+      
+      // Campaign List
+      if (data.campaigns && data.campaigns.length > 0) {
+        var sorted = data.campaigns.slice().sort(function(a, b) { return b.cost - a.cost; });
+        
+        html += '<div class="section-title">Campaigns <span>' + sorted.length + ' total</span></div>';
+        html += '<div class="campaign-list">';
+        
+        sorted.forEach(function(c) {
+          var cpaClass = c.cpa > 100 ? 'cpa-warn' : c.cpa > 0 ? 'cpa-ok' : '';
+          
+          html += '<div class="campaign-row">' +
+            '<div>' +
+              '<div class="camp-name">' +
+                '<span class="camp-type ' + c.type + '">' + c.type + '</span>' +
+                c.name +
+              '</div>' +
+              '<div class="camp-meta">' +
+                '<span class="status ' + c.status + '">' + c.status + '</span>' +
+                '<span>IS: ' + (c.is > 0 ? c.is.toFixed(0) + '%' : '—') + '</span>' +
+              '</div>' +
+            '</div>' +
+            '<div class="camp-metrics">' +
+              '<span><strong>$' + Math.round(c.cost).toLocaleString() + '</strong></span>' +
+              '<span>' + Math.round(c.conv) + ' conv</span>' +
+              '<span class="' + cpaClass + '">$' + (c.cpa > 0 ? c.cpa.toFixed(0) : '—') + '</span>' +
+              '<span>' + c.roas.toFixed(1) + 'x</span>' +
+            '</div>' +
+          '</div>';
+        });
+        
+        html += '</div>';
+      } else {
+        html += '<div style="text-align:center;color:#64748b;padding:20px;font-size:11px;">' +
+          'No campaign data. Use Adalysis menu > Refresh Campaign Data.' +
+        '</div>';
+      }
+      
+      document.getElementById('content').innerHTML = html;
+      document.getElementById('footer').textContent = 'Last: ' + data.lastRefresh;
+    }
+    
+    // Load on open
+    loadData();
+  </script>
+</body>
+</html>
