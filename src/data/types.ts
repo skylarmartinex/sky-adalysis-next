@@ -91,6 +91,27 @@ export interface SearchTerm {
   theme: string;
 }
 
+export interface Keyword {
+  id: string;
+  campId: string;
+  campName?: string;
+  adGroupId: string;
+  adGroupName?: string;
+  keyword: string;
+  matchType: string;
+  status: string;
+  cost: number;
+  clicks: number;
+  impressions: number;
+  conv: number;
+  qualityScore: number;
+  avgCpc: number;
+  maxCpc: number;
+  cpa: number;
+  ctr: number;
+  cvr: number;
+}
+
 export interface RSAAsset {
   campId: string;
   adGroupId: string;
@@ -240,7 +261,7 @@ export interface AppData {
   dailyMetrics: DailyMetric[];
   changeEvents: ChangeEvent[];
   searchTerms: SearchTerm[];
-  keywords: SearchTerm[];
+  keywords: Keyword[];
   rsaAssets: RSAAsset[];
   diagnostics: Diagnostic[];
   opportunities: Opportunity[];

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Campaign, CampaignMetrics, SearchTerm } from "./types";
+import type { Campaign, CampaignMetrics, SearchTerm, Keyword } from "./types";
 
 export const SHEET_IDS = {
   campaigns: process.env.SHEETS_CAMPAIGNS_ID || "1DDvUi5RAOpRlJ_VvgVJptAg_3vrqG0mNc_IBeZ7Vj14",
@@ -250,6 +250,47 @@ export function mapSearchTermRow(row: Record<string, string>, idx: number): Sear
   };
 }
 
+// ── Keyword sheet mapper ──────────────────────────────────────
+export function mapKeywordRow(row: Record<string, string>, idx: number): Keyword {
+  const keyword = pick(row, "Keyword", "keyword", "Search term", "Keyword text");
+  const campName = pick(row, "Campaign", "Campaign Name", "campaign_name");
+  const adGroup = pick(row, "Ad group", "Ad Group", "ad_group");
+  const matchType = pick(row, "Match type", "Match Type", "match_type") || "Broad";
+  const status = pick(row, "Status", "Keyword Status", "status") || "Active";
+  const cost = n(pick(row, "Cost", "Spend"));
+  const clicks = n(pick(row, "Clicks"));
+  const impressions = n(pick(row, "Impressions", "Impr."));
+  const conv = n(pick(row, "Conversions", "Conv."));
+  const qualityScore = n(pick(row, "Quality Score", "Qual. score", "QS"));
+  const avgCpc = n(pick(row, "Avg. CPC", "Avg CPC", "CPC"));
+  const maxCpc = n(pick(row, "Max CPC", "Max. CPC", "max_cpc"));
+  const cpa = conv > 0 ? cost / conv : 0;
+  const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+  const cvr = clicks > 0 ? (conv / clicks) * 100 : 0;
+  const campId = pick(row, "Campaign ID", "Campaign Id") || "camp-001";
+
+  return {
+    id: `kw-gs-${idx}`,
+    campId: campId.startsWith("camp-") ? campId : "camp-001",
+    campName,
+    adGroupId: `ag-gs-${idx}`,
+    adGroupName: adGroup,
+    keyword: keyword || `(empty ${idx})`,
+    matchType: matchType.charAt(0).toUpperCase() + matchType.slice(1).toLowerCase(),
+    status: status.charAt(0).toUpperCase() + status.slice(1).toLowerCase(),
+    cost,
+    clicks,
+    impressions,
+    conv,
+    qualityScore,
+    avgCpc,
+    maxCpc,
+    cpa,
+    ctr,
+    cvr,
+  };
+}
+
 // ── Main loader ───────────────────────────────────────────────
 export interface SheetsResult {
   source: "live" | "mock";
@@ -258,7 +299,7 @@ export interface SheetsResult {
   campaigns: Campaign[];
   campaignMetrics: Record<string, CampaignMetrics>;
   searchTerms: SearchTerm[];
-  keywords: SearchTerm[];
+  keywords: Keyword[];
   rawHeaders: Record<string, string[]>;
   rowCounts: Record<string, number>;
 }
@@ -317,7 +358,7 @@ export async function loadFromSheets(): Promise<SheetsResult> {
       const rows = parseCSV(kwCSV);
       if (rows.length > 0) {
         result.rawHeaders.keywords = Object.keys(rows[0]);
-        result.keywords = rows.map((r, i) => mapSearchTermRow(r, i));
+        result.keywords = rows.map((r, i) => mapKeywordRow(r, i));
         result.rowCounts.keywords = rows.length;
         result.status.keywords = "ok";
       }
@@ -332,7 +373,13 @@ export async function loadFromSheets(): Promise<SheetsResult> {
   return result;
 }
 
-export async function checkSheetsStatus(): Promise<Record<SheetName, "ok" | "unpublished" | "error">> {
+export async function checkSheetsStatus(): Promise<{
+  status: Record<SheetName, "ok" | "unpublished" | "error">;
+  sheetIds: typeof SHEET_IDS;
+  urls: Record<SheetName, string>;
+  editUrls: Record<SheetName, string>;
+  publishInstructions: string;
+}> {
   const checks = await Promise.all(
     (Object.entries(SHEET_IDS) as [SheetName, string][]).map(async ([name, id]) => {
       const csv = await fetchCSV(id, 5000);
@@ -340,5 +387,21 @@ export async function checkSheetsStatus(): Promise<Record<SheetName, "ok" | "unp
       return [name, status] as [SheetName, "ok" | "unpublished" | "error"];
     })
   );
-  return Object.fromEntries(checks) as Record<SheetName, "ok" | "unpublished" | "error">;
+  const status = Object.fromEntries(checks) as Record<SheetName, "ok" | "unpublished" | "error">;
+
+  return {
+    status,
+    sheetIds: SHEET_IDS,
+    urls: {
+      campaigns: `https://docs.google.com/spreadsheets/d/${SHEET_IDS.campaigns}/pub?output=csv`,
+      searchTerms: `https://docs.google.com/spreadsheets/d/${SHEET_IDS.searchTerms}/pub?output=csv`,
+      keywords: `https://docs.google.com/spreadsheets/d/${SHEET_IDS.keywords}/pub?output=csv`,
+    },
+    editUrls: {
+      campaigns: `https://docs.google.com/spreadsheets/d/${SHEET_IDS.campaigns}/edit`,
+      searchTerms: `https://docs.google.com/spreadsheets/d/${SHEET_IDS.searchTerms}/edit`,
+      keywords: `https://docs.google.com/spreadsheets/d/${SHEET_IDS.keywords}/edit`,
+    },
+    publishInstructions: "For each sheet: File → Share → Publish to web → Entire Document → CSV → Publish",
+  };
 }

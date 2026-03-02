@@ -24,12 +24,14 @@ export async function getData(): Promise<AppData> {
 
   const liveCampaigns = sheets.campaigns.length > 0;
   const liveSearchTerms = sheets.searchTerms.length > 0;
+  const liveKeywords = sheets.keywords.length > 0;
 
   const campaigns: Campaign[] = liveCampaigns ? sheets.campaigns : mock.campaigns;
   const campaignMetrics: Record<string, CampaignMetrics> = liveCampaigns
     ? sheets.campaignMetrics
     : mock.campaignMetrics;
   const searchTerms = liveSearchTerms ? sheets.searchTerms : mock.searchTerms;
+  const keywords = liveKeywords ? sheets.keywords : [];
 
   // Auto-detect issues on live campaigns
   if (liveCampaigns) {
@@ -55,7 +57,7 @@ export async function getData(): Promise<AppData> {
     liveSheets: {
       campaigns: liveCampaigns,
       searchTerms: liveSearchTerms,
-      keywords: sheets.keywords.length > 0,
+      keywords: liveKeywords,
     },
     unpublished: Object.entries(sheets.status)
       .filter(([, s]) => s !== "ok")
@@ -69,7 +71,7 @@ export async function getData(): Promise<AppData> {
     dailyMetrics: mock.dailyMetrics,
     changeEvents: mock.changeEvents,
     searchTerms,
-    keywords: sheets.keywords.length > 0 ? sheets.keywords : [],
+    keywords,
     rsaAssets: mock.rsaAssets,
     diagnostics: mock.diagnostics,
     opportunities: mock.opportunities,
